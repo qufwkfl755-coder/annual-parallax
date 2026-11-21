@@ -1,0 +1,1369 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>3D 시차 & 연주시차 통합 원리 체험 시뮬레이터</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; font-family: 'Noto Sans KR', sans-serif; user-select: none; }
+    body { margin: 0; overflow: hidden; background-color: #0f172a; }
+    canvas { display: block; width: 100%; height: 100%; }
+    input[type=range] {
+      -webkit-appearance: none;
+      background: transparent;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      height: 24px;
+      width: 24px;
+      border-radius: 50%;
+      background: #f97316;
+      border: 3px solid #ffffff;
+      cursor: pointer;
+      margin-top: -8px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+    }
+    .space-theme input[type=range]::-webkit-slider-thumb {
+      background: #38bdf8;
+      box-shadow: 0 2px 10px rgba(56, 189, 248, 0.55);
+    }
+    input[type=range]::-webkit-slider-runnable-track {
+      width: 100%;
+      height: 8px;
+      cursor: pointer;
+      background: #cbd5e1;
+      border-radius: 4px;
+    }
+    .space-theme input[type=range]::-webkit-slider-runnable-track {
+      background: #334155;
+    }
+  </style>
+</head>
+<body id="appBody" class="relative w-screen h-screen overflow-hidden text-slate-800">
+
+  <!-- 3D 렌더링 캔버스 컨테이너 -->
+  <div id="canvas-container" class="absolute inset-0 w-full h-full"></div>
+
+  <!-- 상단 통합 헤더 & 모드/시점 전환 HUD -->
+  <div class="absolute top-3 left-3 right-3 flex flex-col lg:flex-row justify-between items-stretch lg:items-start gap-2.5 pointer-events-none z-10">
+    
+    <!-- 왼쪽: 주제 선택 탭 + 설명 카드 -->
+    <div id="headerCard" class="bg-white/95 backdrop-blur-md border-2 border-amber-300 p-3.5 sm:px-5 sm:py-3.5 rounded-2xl shadow-xl pointer-events-auto transition-colors duration-300">
+      <!-- 주제 전환 탭 (당근·동물 버전 vs 우주·별 버전) -->
+      <div class="flex flex-wrap items-center gap-2 mb-2">
+        <button id="tabAnimal" onclick="switchTheme('animal')"
+          class="px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-black bg-orange-500 text-white shadow-md transition active:scale-95">
+          🥕 1단계: 당근과 동물 시차
+        </button>
+        <button id="tabSpace" onclick="switchTheme('space')"
+          class="px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-black bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300 transition active:scale-95">
+          🌍 2단계: 지구 공전 & 연주시차
+        </button>
+      </div>
+
+      <h1 id="mainTitle" class="text-base sm:text-xl font-black text-slate-800 tracking-tight">
+        당근과 동물 친구들로 보는 시차(Parallax)
+      </h1>
+      <p id="mainDesc" class="text-xs sm:text-sm text-slate-600 mt-0.5">
+        관측자의 <span class="text-orange-600 font-bold">좌우 위치</span>와 당근까지의 <span class="text-sky-600 font-bold">거리</span>를 바꿔보며 뒤쪽 <span class="font-bold text-slate-800">1~9번 동물 표지판</span> 변화를 확인하세요!
+      </p>
+    </div>
+
+    <!-- 오른쪽: 카메라 시점 전환 버튼 (1인칭 vs 3인칭) -->
+    <div class="flex gap-2 pointer-events-auto self-start">
+      <button id="btnViewObserver" onclick="setCameraMode('observer')"
+        class="px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm bg-orange-500 text-white shadow-lg transition active:scale-95">
+        👁️ 관측자 시점 (1인칭)
+      </button>
+      <button id="btnViewTop" onclick="setCameraMode('top')"
+        class="px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm bg-white/95 text-slate-700 border-2 border-slate-200 hover:bg-slate-50 shadow-lg transition active:scale-95">
+        🛰️ 위에서 내려다보기 (3인칭)
+      </button>
+    </div>
+  </div>
+
+  <!-- 중앙 조준 십자선 (1인칭 시점) -->
+  <div id="crosshair" class="absolute inset-0 pointer-events-none flex items-center justify-center z-0">
+    <div id="crosshairRing" class="w-10 h-10 border-2 border-rose-500/75 rounded-full flex items-center justify-center bg-white/10">
+      <div id="crosshairDot" class="w-2 h-2 bg-rose-500 rounded-full"></div>
+    </div>
+  </div>
+
+  <!-- 하단 컨트롤 패널 -->
+  <div id="bottomPanel" class="absolute bottom-3 left-3 right-3 max-w-4xl mx-auto bg-white/95 backdrop-blur-md border-2 border-sky-200 p-4 sm:p-5 rounded-3xl shadow-2xl z-10 transition-colors duration-300">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3.5 sm:gap-5">
+      
+      <!-- 1. 관측자 / 지구 위치 컨트롤 -->
+      <div id="ctrlBox1" class="bg-amber-50/90 border border-amber-200 p-3.5 rounded-2xl">
+        <div class="flex justify-between items-center mb-1.5">
+          <span id="ctrl1Title" class="text-xs sm:text-sm font-black text-amber-800">🚶 1단계: 관측자 좌우 위치</span>
+          <span id="ctrl1ValText" class="text-xs sm:text-sm font-black text-orange-600 bg-white px-2.5 py-0.5 rounded-full border border-amber-200">중앙 (0.0m)</span>
+        </div>
+        <input id="posSlider" type="range" min="-4.5" max="4.5" step="0.1" value="0" class="w-full my-1">
+        <div class="flex justify-between gap-2 mt-2">
+          <button id="btnPosLeft" onclick="handlePosPreset('left')" class="flex-1 py-1.5 bg-sky-100 hover:bg-sky-200 text-sky-800 font-bold text-xs rounded-xl transition">⬅️ 왼쪽 끝</button>
+          <button id="btnAutoMove" onclick="toggleAutoPlay()" class="flex-1 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow transition">⚡ 좌우 자동 왕복</button>
+          <button id="btnPosRight" onclick="handlePosPreset('right')" class="flex-1 py-1.5 bg-orange-100 hover:bg-orange-200 text-orange-800 font-bold text-xs rounded-xl transition">오른쪽 끝 ➡️</button>
+        </div>
+      </div>
+
+      <!-- 2. 목표 물체 / 목표 별 거리 컨트롤 -->
+      <div id="ctrlBox2" class="bg-sky-50/90 border border-sky-200 p-3.5 rounded-2xl">
+        <div class="flex justify-between items-center mb-1.5">
+          <span id="ctrl2Title" class="text-xs sm:text-sm font-black text-sky-800">🥕 2단계: 당근까지의 거리</span>
+          <span id="ctrl2ValText" class="text-xs sm:text-sm font-black text-sky-700 bg-white px-2.5 py-0.5 rounded-full border border-sky-200">12.0 m (보통 거리)</span>
+        </div>
+        <input id="distSlider" type="range" min="7.5" max="30" step="0.5" value="12" class="w-full my-1">
+        <div class="flex justify-between gap-2 mt-2">
+          <button id="btnDistNear" onclick="setDistance(8.5)" class="flex-1 py-1.5 bg-rose-100 hover:bg-rose-200 text-rose-800 font-bold text-xs rounded-xl transition">🔥 가까움 (시차 큼)</button>
+          <button id="btnDistMid" onclick="setDistance(17)" class="flex-1 py-1.5 bg-sky-100 hover:bg-sky-200 text-sky-800 font-bold text-xs rounded-xl transition">중간 거리</button>
+          <button id="btnDistFar" onclick="setDistance(29.5)" class="flex-1 py-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 font-bold text-xs rounded-xl transition">🔭 아주 멈 (시차 작음)</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 하단 요약 상태 바 -->
+    <div id="hudDivider" class="mt-3 pt-2.5 border-t border-slate-200 flex flex-wrap justify-between items-center gap-2 text-xs sm:text-sm">
+      <div>
+        <span id="hudDistLabel" class="text-slate-500 font-bold">현재 당근 거리:</span>
+        <span id="hudDistance" class="font-black text-slate-800 ml-1">보통 거리 (12.0m)</span>
+      </div>
+      <div>
+        <span id="hudParallaxLabel" class="text-slate-500 font-bold">배경 동물 변화(시차):</span>
+        <span id="hudParallax" class="font-black text-orange-600 ml-1">중간 정도 변함</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 전역 3D 및 통합 시뮬레이션 상태
+    let scene, camera, renderer;
+    let animalWorldGroup, spaceWorldGroup;
+    let hemiLight, dirLight, ambientLight, sunLight;
+
+    // 동물 월드 전용 객체
+    let observerGroup, carrotObject;
+    let aSightLine, aLeftLine, aRightLine;
+
+    // 우주 월드 전용 객체
+    let sunGroup, earthGroup, targetStarGroup;
+    let sSightLine, sJanLine, sJulLine, sSunLine;
+
+    let currentTheme = 'animal'; // 'animal' | 'space'
+    let cameraMode = 'observer'; // 'observer' | 'top'
+
+    const orbitRadius = 4.6;
+    const bgZ = -41;
+
+    const state = {
+      observerX: 0,        // 동물 모드 관측자 X (-4.5 ~ +4.5)
+      orbitDeg: 180,       // 우주 모드 지구 공전 각도 (180: 1월 왼쪽, 0: 7월 오른쪽)
+      targetDistance: 12,  // 목표 물체(당근 / 목표 별) Z 거리
+      autoPlay: false,
+      walkDir: 1
+    };
+
+    // 3인칭 시점 회전용 변수
+    let isDragging = false;
+    let prevMouse = { x: 0, y: 0 };
+    const topViewAngle = { theta: 0, phi: 0.96, radius: 47 };
+
+    // ---------------------------------------------------------
+    // 텍스처 생성 헬퍼 함수들
+    // ---------------------------------------------------------
+    function createAnimalSignTexture(num, emoji, name, isCenter) {
+      const c = document.createElement('canvas');
+      c.width = 512;
+      c.height = 640;
+      const ctx = c.getContext('2d');
+
+      ctx.fillStyle = isCenter ? '#292524' : '#1e293b';
+      ctx.beginPath();
+      ctx.roundRect(18, 18, 476, 604, 68);
+      ctx.fill();
+
+      ctx.lineWidth = 20;
+      ctx.strokeStyle = isCenter ? '#f59e0b' : '#38bdf8';
+      ctx.stroke();
+
+      ctx.save();
+      ctx.setLineDash([18, 14]);
+      ctx.lineWidth = 5;
+      ctx.strokeStyle = isCenter ? '#fbbf24' : '#7dd3fc';
+      ctx.beginPath();
+      ctx.roundRect(42, 42, 428, 556, 52);
+      ctx.stroke();
+      ctx.restore();
+
+      if (isCenter) {
+        ctx.font = '58px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('👑', 256, 76);
+      }
+
+      ctx.fillStyle = isCenter ? '#ea580c' : '#0284c7';
+      ctx.beginPath();
+      ctx.arc(256, 182, 114, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.lineWidth = 8;
+      ctx.strokeStyle = '#f8fafc';
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '900 132px "Noto Sans KR", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(num), 256, 188);
+
+      ctx.fillStyle = isCenter ? '#f59e0b' : '#334155';
+      ctx.beginPath();
+      ctx.roundRect(42, 315, 428, 114, 52);
+      ctx.fill();
+
+      ctx.lineWidth = 5;
+      ctx.strokeStyle = isCenter ? '#fef08a' : '#7dd3fc';
+      ctx.stroke();
+
+      ctx.fillStyle = isCenter ? '#1c1917' : '#ffffff';
+      ctx.font = '900 84px "Noto Sans KR", sans-serif';
+      ctx.fillText(name, 256, 374);
+
+      ctx.font = '145px sans-serif';
+      ctx.fillText(emoji, 256, 526);
+
+      return new THREE.CanvasTexture(c);
+    }
+
+    function createStarSignTexture(num, colorHex, isCenter) {
+      const c = document.createElement('canvas');
+      c.width = 512;
+      c.height = 640;
+      const ctx = c.getContext('2d');
+
+      ctx.fillStyle = isCenter ? '#172554' : '#0f172a';
+      ctx.beginPath();
+      ctx.roundRect(18, 18, 476, 604, 68);
+      ctx.fill();
+
+      ctx.lineWidth = 18;
+      ctx.strokeStyle = isCenter ? '#facc15' : '#38bdf8';
+      ctx.stroke();
+
+      ctx.save();
+      ctx.setLineDash([16, 14]);
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = isCenter ? '#fef08a' : '#7dd3fc';
+      ctx.beginPath();
+      ctx.roundRect(42, 42, 428, 556, 52);
+      ctx.stroke();
+      ctx.restore();
+
+      if (isCenter) {
+        ctx.font = '54px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('✨', 256, 76);
+      }
+
+      ctx.fillStyle = isCenter ? '#eab308' : '#0284c7';
+      ctx.beginPath();
+      ctx.arc(256, 182, 114, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.lineWidth = 8;
+      ctx.strokeStyle = '#ffffff';
+      ctx.stroke();
+
+      ctx.fillStyle = isCenter ? '#0f172a' : '#ffffff';
+      ctx.font = '900 132px "Noto Sans KR", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(num), 256, 188);
+
+      ctx.fillStyle = isCenter ? '#facc15' : '#1e293b';
+      ctx.beginPath();
+      ctx.roundRect(46, 318, 420, 108, 48);
+      ctx.fill();
+
+      ctx.lineWidth = 5;
+      ctx.strokeStyle = isCenter ? '#ffffff' : '#38bdf8';
+      ctx.stroke();
+
+      ctx.fillStyle = isCenter ? '#0f172a' : '#f8fafc';
+      ctx.font = '900 76px "Noto Sans KR", sans-serif';
+      ctx.fillText(`별 ${num}`, 256, 374);
+
+      const glow = ctx.createRadialGradient(256, 522, 8, 256, 522, 85);
+      glow.addColorStop(0, '#ffffff');
+      glow.addColorStop(0.35, colorHex);
+      glow.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(256, 522, 85, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.moveTo(256, 452);
+      ctx.quadraticCurveTo(256, 522, 326, 522);
+      ctx.quadraticCurveTo(256, 522, 256, 592);
+      ctx.quadraticCurveTo(256, 522, 186, 522);
+      ctx.quadraticCurveTo(256, 522, 256, 452);
+      ctx.fill();
+
+      return new THREE.CanvasTexture(c);
+    }
+
+    function createGlowTexture(innerColor, midColor) {
+      const c = document.createElement('canvas');
+      c.width = 256;
+      c.height = 256;
+      const ctx = c.getContext('2d');
+      const grad = ctx.createRadialGradient(128, 128, 10, 128, 128, 128);
+      grad.addColorStop(0, innerColor);
+      grad.addColorStop(0.4, midColor);
+      grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, 256, 256);
+      return new THREE.CanvasTexture(c);
+    }
+
+    function makeLine(color, dashed = false) {
+      const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+      const mat = dashed
+        ? new THREE.LineDashedMaterial({ color, dashSize: 0.65, gapSize: 0.42 })
+        : new THREE.LineBasicMaterial({ color });
+      return new THREE.Line(geo, mat);
+    }
+
+    // ---------------------------------------------------------
+    // 3D 장면 초기화
+    // ---------------------------------------------------------
+    function init3D() {
+      const container = document.getElementById('canvas-container');
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x334155);
+      scene.fog = new THREE.FogExp2(0x334155, 0.0072);
+
+      camera = new THREE.PerspectiveCamera(58, window.innerWidth / window.innerHeight, 0.1, 300);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.shadowMap.enabled = true;
+      container.appendChild(renderer.domElement);
+
+      // 조명 세팅
+      hemiLight = new THREE.HemisphereLight(0xe2e8f0, 0x1e293b, 0.78);
+      dirLight = new THREE.DirectionalLight(0xfef3c7, 0.72);
+      dirLight.position.set(16, 35, 22);
+      dirLight.castShadow = true;
+
+      ambientLight = new THREE.AmbientLight(0x94a3b8, 0.65);
+      sunLight = new THREE.PointLight(0xfef08a, 1.8, 120);
+      sunLight.position.set(0, 2, 0);
+
+      scene.add(hemiLight, dirLight, ambientLight, sunLight);
+
+      // 두 세계 그룹 생성
+      animalWorldGroup = new THREE.Group();
+      spaceWorldGroup = new THREE.Group();
+      scene.add(animalWorldGroup, spaceWorldGroup);
+
+      buildAnimalWorld();
+      buildSpaceWorld();
+
+      // 슬라이더 이벤트 연결
+      document.getElementById('distSlider').addEventListener('input', (e) => {
+        state.targetDistance = parseFloat(e.target.value);
+        updateSimulation();
+      });
+
+      document.getElementById('posSlider').addEventListener('input', (e) => {
+        state.autoPlay = false;
+        updateAutoBtnUI();
+        if (currentTheme === 'animal') {
+          state.observerX = parseFloat(e.target.value);
+        } else {
+          state.orbitDeg = parseFloat(e.target.value);
+        }
+        updateSimulation();
+      });
+
+      // 3인칭 시점 마우스/터치 드래그 회전
+      const dom = renderer.domElement;
+      const startDrag = (clientX, clientY) => {
+        if (cameraMode !== 'top') return;
+        isDragging = true;
+        prevMouse = { x: clientX, y: clientY };
+      };
+      const moveDrag = (clientX, clientY) => {
+        if (!isDragging || cameraMode !== 'top') return;
+        const dx = clientX - prevMouse.x;
+        const dy = clientY - prevMouse.y;
+        topViewAngle.theta -= dx * 0.008;
+        topViewAngle.phi = Math.max(0.25, Math.min(1.48, topViewAngle.phi + dy * 0.008));
+        prevMouse = { x: clientX, y: clientY };
+        updateSimulation();
+      };
+
+      dom.addEventListener('mousedown', (e) => startDrag(e.clientX, e.clientY));
+      window.addEventListener('mouseup', () => { isDragging = false; });
+      window.addEventListener('mousemove', (e) => moveDrag(e.clientX, e.clientY));
+
+      dom.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 1) startDrag(e.touches[0].clientX, e.touches[0].clientY);
+      }, { passive: true });
+      window.addEventListener('touchend', () => { isDragging = false; });
+      window.addEventListener('touchmove', (e) => {
+        if (e.touches.length === 1) moveDrag(e.touches[0].clientX, e.touches[0].clientY);
+      }, { passive: true });
+
+      window.addEventListener('resize', onWindowResize);
+      switchTheme('animal');
+    }
+
+    // ---------------------------------------------------------
+    // 1단계: 당근과 동물 친구들 월드 구축
+    // ---------------------------------------------------------
+    function buildAnimalWorld() {
+      const ground = new THREE.Mesh(
+        new THREE.PlaneGeometry(180, 180),
+        new THREE.MeshStandardMaterial({ color: 0x2d5a3c, roughness: 0.95 })
+      );
+      ground.rotation.x = -Math.PI / 2;
+      ground.receiveShadow = true;
+      animalWorldGroup.add(ground);
+
+      // 들꽃
+      const flowerColors = [0xfde047, 0xfb7185, 0xe2e8f0, 0xa78bfa];
+      for (let i = 0; i < 55; i++) {
+        const fx = (Math.random() - 0.5) * 65;
+        const fz = -Math.random() * 48 + 3;
+        if (Math.abs(fx) < 2.2 && Math.abs(fz) < 35) continue;
+        const flower = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.2, 0.2, 0.08, 8),
+          new THREE.MeshStandardMaterial({ color: flowerColors[i % flowerColors.length], roughness: 0.8 })
+        );
+        flower.position.set(fx, 0.04, fz);
+        animalWorldGroup.add(flower);
+      }
+
+      // 저녁 구름
+      const cloudMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.9 });
+      [[-22, 16, -48], [-8, 19, -54], [10, 17, -50], [24, 15, -46], [0, 21, -58]].forEach(([cx, cy, cz]) => {
+        const cloud = new THREE.Group();
+        [[0, 0, 0, 2.2], [-1.8, -0.3, 0.3, 1.6], [1.8, -0.2, -0.2, 1.7], [0.6, 0.7, 0.2, 1.5]].forEach(([px, py, pz, r]) => {
+          const puff = new THREE.Mesh(new THREE.SphereGeometry(r, 14, 14), cloudMat);
+          puff.position.set(px, py, pz);
+          cloud.add(puff);
+        });
+        cloud.position.set(cx, cy, cz);
+        animalWorldGroup.add(cloud);
+      });
+
+      // 산책로
+      const rail = new THREE.Mesh(
+        new THREE.BoxGeometry(11.5, 0.16, 1.1),
+        new THREE.MeshStandardMaterial({ color: 0x92400e, roughness: 0.8 })
+      );
+      rail.position.set(0, 0.08, 0);
+      animalWorldGroup.add(rail);
+
+      // 관측자 캐릭터
+      observerGroup = new THREE.Group();
+      const bodyMesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.45, 0.55, 1.2, 16),
+        new THREE.MeshStandardMaterial({ color: 0x2563eb, roughness: 0.5 })
+      );
+      bodyMesh.position.y = 0.7;
+      const headMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(0.38, 16, 16),
+        new THREE.MeshStandardMaterial({ color: 0xfde68a, roughness: 0.5 })
+      );
+      headMesh.position.y = 1.65;
+      const hatMesh = new THREE.Mesh(
+        new THREE.ConeGeometry(0.42, 0.45, 16),
+        new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.6 })
+      );
+      hatMesh.position.y = 2.1;
+      observerGroup.add(bodyMesh, headMesh, hatMesh);
+      animalWorldGroup.add(observerGroup);
+
+      // 3D 당근
+      carrotObject = new THREE.Group();
+      const carrotSpinGroup = new THREE.Group();
+
+      const carrotBody = new THREE.Mesh(
+        new THREE.ConeGeometry(0.48, 1.85, 20),
+        new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.45 })
+      );
+      carrotBody.rotation.x = Math.PI;
+      carrotBody.position.y = 1.35;
+      carrotBody.castShadow = true;
+      carrotSpinGroup.add(carrotBody);
+
+      const ringMat = new THREE.MeshStandardMaterial({ color: 0xc2410c, roughness: 0.6 });
+      [1.75, 1.4, 1.05].forEach((ry, idx) => {
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.38 - idx * 0.08, 0.025, 8, 20), ringMat);
+        ring.rotation.x = Math.PI / 2;
+        ring.position.y = ry;
+        carrotSpinGroup.add(ring);
+      });
+
+      const leafMat = new THREE.MeshStandardMaterial({ color: 0x16a34a, roughness: 0.5 });
+      [-0.25, 0, 0.25].forEach((rotZ) => {
+        const leaf = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.04, 0.75, 10), leafMat);
+        leaf.position.set(rotZ * 0.5, 2.52, 0);
+        leaf.rotation.z = rotZ;
+        carrotSpinGroup.add(leaf);
+      });
+
+      const standMesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.22, 0.3, 0.45, 16),
+        new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.8 })
+      );
+      standMesh.position.y = 0.22;
+      carrotObject.add(carrotSpinGroup, standMesh);
+      animalWorldGroup.add(carrotObject);
+
+      // 뒤쪽 1~9번 동물 캐릭터 & 표지판
+      const animals = [
+        { num: 1, emoji: '🐰', name: '흰토끼', type: 'rabbit', color: 0xf8fafc, accent: 0xf472b6 },
+        { num: 2, emoji: '🐴', name: '갈색말', type: 'horse', color: 0x78350f, accent: 0x1c1917 },
+        { num: 3, emoji: '🐹', name: '기니피그', type: 'guineapig', color: 0xd97706, accent: 0xfef3c7 },
+        { num: 4, emoji: '🦌', name: '꽃사슴', type: 'deer', color: 0xb45309, accent: 0xfef08a },
+        { num: 5, emoji: '🐇', name: '회색토끼', type: 'rabbit', color: 0x94a3b8, accent: 0xfda4af },
+        { num: 6, emoji: '🐑', name: '복슬양', type: 'sheep', color: 0xf1f5f9, accent: 0x334155 },
+        { num: 7, emoji: '🦙', name: '알파카', type: 'alpaca', color: 0xfde68a, accent: 0x92400e },
+        { num: 8, emoji: '🐿️', name: '다람쥐', type: 'squirrel', color: 0x9a3412, accent: 0xfed7aa },
+        { num: 9, emoji: '🐐', name: '산양', type: 'goat', color: 0xe2e8f0, accent: 0x475569 }
+      ];
+
+      const fenceMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(46, 0.5, 0.35),
+        new THREE.MeshStandardMaterial({ color: 0x78350f })
+      );
+      fenceMesh.position.set(0, 0.75, bgZ - 1.5);
+      animalWorldGroup.add(fenceMesh);
+
+      const spacingX = 4.6;
+      animals.forEach((a, idx) => {
+        const posX = (idx - 4) * spacingX;
+        const group = new THREE.Group();
+        group.position.set(posX, 0, bgZ);
+
+        const signTex = createAnimalSignTexture(a.num, a.emoji, a.name, a.num === 5);
+        const signMesh = new THREE.Mesh(
+          new THREE.PlaneGeometry(4.0, 5.0),
+          new THREE.MeshBasicMaterial({ map: signTex, side: THREE.DoubleSide })
+        );
+        signMesh.position.set(0, 6.2, -0.9);
+        group.add(signMesh);
+
+        const pole = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.14, 0.14, 3.8, 10),
+          new THREE.MeshStandardMaterial({ color: 0x78350f })
+        );
+        pole.position.set(0, 1.9, -0.9);
+        group.add(pole);
+
+        const charGroup = new THREE.Group();
+        charGroup.scale.set(1.35, 1.35, 1.35);
+        charGroup.position.set(0, 0, 0.8);
+
+        const mainMat = new THREE.MeshStandardMaterial({ color: a.color, roughness: 0.65 });
+        const accentMat = new THREE.MeshStandardMaterial({ color: a.accent, roughness: 0.7 });
+        const eyeMat = new THREE.MeshBasicMaterial({ color: 0x0f172a });
+        const blushMat = new THREE.MeshBasicMaterial({ color: 0xf472b6 });
+
+        const addFaceDetails = (headY, headZ, headR) => {
+          const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8), eyeMat);
+          eyeL.position.set(-headR * 0.42, headY + 0.08, headZ + headR * 0.88);
+          const eyeR = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8), eyeMat);
+          eyeR.position.set(headR * 0.42, headY + 0.08, headZ + headR * 0.88);
+          const nose = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8), accentMat);
+          nose.position.set(0, headY - 0.05, headZ + headR * 0.98);
+          const blushL = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8), blushMat);
+          blushL.position.set(-headR * 0.55, headY - 0.06, headZ + headR * 0.8);
+          const blushR = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8), blushMat);
+          blushR.position.set(headR * 0.55, headY - 0.06, headZ + headR * 0.8);
+          charGroup.add(eyeL, eyeR, nose, blushL, blushR);
+        };
+
+        if (a.type === 'rabbit') {
+          const body = new THREE.Mesh(new THREE.SphereGeometry(0.75, 16, 16), mainMat);
+          body.scale.set(0.95, 1.15, 1.0);
+          body.position.set(0, 0.8, 0);
+          const head = new THREE.Mesh(new THREE.SphereGeometry(0.58, 16, 16), mainMat);
+          head.position.set(0, 1.75, 0.25);
+          const earL = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.15, 1.25, 10), mainMat);
+          earL.position.set(-0.22, 2.75, 0.2);
+          earL.rotation.z = 0.1;
+          const earR = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.15, 1.25, 10), mainMat);
+          earR.position.set(0.22, 2.75, 0.2);
+          earR.rotation.z = -0.1;
+          const innerEarL = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 1.05, 8), accentMat);
+          innerEarL.position.set(-0.22, 2.75, 0.28);
+          innerEarL.rotation.z = 0.1;
+          const innerEarR = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 1.05, 8), accentMat);
+          innerEarR.position.set(0.22, 2.75, 0.28);
+          innerEarR.rotation.z = -0.1;
+          charGroup.add(body, head, earL, earR, innerEarL, innerEarR);
+          addFaceDetails(1.75, 0.25, 0.58);
+        } else if (a.type === 'horse') {
+          const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 1.5, 14), mainMat);
+          torso.rotation.x = Math.PI / 2;
+          torso.position.set(0, 1.05, -0.1);
+          const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.45, 1.1, 12), mainMat);
+          neck.position.set(0, 1.75, 0.55);
+          neck.rotation.x = -0.35;
+          const head = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.65, 1.05), mainMat);
+          head.position.set(0, 2.25, 0.85);
+          const mane = new THREE.Mesh(new THREE.BoxGeometry(0.22, 1.1, 0.35), accentMat);
+          mane.position.set(0, 1.95, 0.28);
+          const earL = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.38, 8), mainMat);
+          earL.position.set(-0.2, 2.72, 0.65);
+          const earR = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.38, 8), mainMat);
+          earR.position.set(0.2, 2.72, 0.65);
+          [[-0.3, -0.6], [0.3, -0.6], [-0.3, 0.45], [0.3, 0.45]].forEach(([lx, lz]) => {
+            const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.11, 0.9, 8), mainMat);
+            leg.position.set(lx, 0.45, lz);
+            charGroup.add(leg);
+          });
+          charGroup.add(torso, neck, head, mane, earL, earR);
+          addFaceDetails(2.25, 0.85, 0.52);
+        } else if (a.type === 'guineapig') {
+          const body = new THREE.Mesh(new THREE.SphereGeometry(0.88, 18, 16), mainMat);
+          body.scale.set(1.05, 0.85, 1.35);
+          body.position.set(0, 0.72, 0.1);
+          const patch = new THREE.Mesh(new THREE.SphereGeometry(0.75, 14, 14), accentMat);
+          patch.scale.set(0.95, 0.8, 0.8);
+          patch.position.set(0, 0.72, 0.55);
+          const earL = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.08, 10), accentMat);
+          earL.rotation.z = Math.PI / 2;
+          earL.position.set(-0.55, 1.25, 0.75);
+          const earR = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.08, 10), accentMat);
+          earR.rotation.z = Math.PI / 2;
+          earR.position.set(0.55, 1.25, 0.75);
+          charGroup.add(body, patch, earL, earR);
+          addFaceDetails(0.85, 0.65, 0.65);
+        } else if (a.type === 'deer') {
+          const body = new THREE.Mesh(new THREE.SphereGeometry(0.68, 16, 16), mainMat);
+          body.scale.set(0.9, 1.15, 1.1);
+          body.position.set(0, 0.95, 0);
+          const head = new THREE.Mesh(new THREE.SphereGeometry(0.52, 16, 16), mainMat);
+          head.position.set(0, 1.85, 0.35);
+          const antlerMat = new THREE.MeshStandardMaterial({ color: 0xfef3c7 });
+          [-0.25, 0.25].forEach((ax) => {
+            const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 0.95, 8), antlerMat);
+            stem.position.set(ax, 2.65, 0.25);
+            stem.rotation.z = ax < 0 ? 0.22 : -0.22;
+            const branch = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.45, 8), antlerMat);
+            branch.position.set(ax * 1.4, 2.75, 0.35);
+            branch.rotation.z = ax < 0 ? -0.5 : 0.5;
+            charGroup.add(stem, branch);
+          });
+          [[-0.35, 1.1], [0.35, 1.0], [0, 1.25]].forEach(([sx, sy]) => {
+            const spot = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 8), accentMat);
+            spot.position.set(sx, sy, 0.55);
+            charGroup.add(spot);
+          });
+          charGroup.add(body, head);
+          addFaceDetails(1.85, 0.35, 0.52);
+        } else if (a.type === 'sheep') {
+          const woolGroup = new THREE.Group();
+          [[0, 0.95, 0, 0.85], [-0.45, 1.05, 0.2, 0.52], [0.45, 1.05, 0.2, 0.52], [0, 1.35, 0.1, 0.55], [-0.35, 0.7, 0.3, 0.48], [0.35, 0.7, 0.3, 0.48]].forEach(([px, py, pz, pr]) => {
+            const p = new THREE.Mesh(new THREE.SphereGeometry(pr, 12, 12), mainMat);
+            p.position.set(px, py, pz);
+            woolGroup.add(p);
+          });
+          const head = new THREE.Mesh(new THREE.SphereGeometry(0.48, 14, 14), accentMat);
+          head.position.set(0, 1.45, 0.75);
+          const topWool = new THREE.Mesh(new THREE.SphereGeometry(0.32, 10, 10), mainMat);
+          topWool.position.set(0, 1.88, 0.72);
+          const earL = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.42, 8), accentMat);
+          earL.rotation.z = 1.1;
+          earL.position.set(-0.52, 1.45, 0.7);
+          const earR = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.42, 8), accentMat);
+          earR.rotation.z = -1.1;
+          earR.position.set(0.52, 1.45, 0.7);
+          charGroup.add(woolGroup, head, topWool, earL, earR);
+          addFaceDetails(1.45, 0.75, 0.48);
+        } else if (a.type === 'alpaca') {
+          const body = new THREE.Mesh(new THREE.SphereGeometry(0.75, 14, 14), mainMat);
+          body.scale.set(0.95, 1.0, 1.25);
+          body.position.set(0, 0.85, 0);
+          const longNeck = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.42, 1.55, 12), mainMat);
+          longNeck.position.set(0, 1.85, 0.35);
+          const head = new THREE.Mesh(new THREE.SphereGeometry(0.46, 14, 14), mainMat);
+          head.position.set(0, 2.65, 0.52);
+          const earL = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.42, 8), accentMat);
+          earL.position.set(-0.22, 3.15, 0.48);
+          const earR = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.42, 8), accentMat);
+          earR.position.set(0.22, 3.15, 0.48);
+          charGroup.add(body, longNeck, head, earL, earR);
+          addFaceDetails(2.65, 0.52, 0.46);
+        } else if (a.type === 'squirrel') {
+          const body = new THREE.Mesh(new THREE.SphereGeometry(0.65, 14, 14), mainMat);
+          body.position.set(0, 0.75, 0.15);
+          const head = new THREE.Mesh(new THREE.SphereGeometry(0.54, 14, 14), mainMat);
+          head.position.set(0, 1.55, 0.3);
+          const bigTail = new THREE.Mesh(new THREE.SphereGeometry(0.85, 16, 16), accentMat);
+          bigTail.scale.set(0.75, 1.35, 0.9);
+          bigTail.position.set(0, 1.45, -0.58);
+          const earL = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 10), mainMat);
+          earL.position.set(-0.34, 2.02, 0.25);
+          const earR = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 10), mainMat);
+          earR.position.set(0.34, 2.02, 0.25);
+          charGroup.add(body, head, bigTail, earL, earR);
+          addFaceDetails(1.55, 0.3, 0.54);
+        } else if (a.type === 'goat') {
+          const body = new THREE.Mesh(new THREE.SphereGeometry(0.72, 14, 14), mainMat);
+          body.scale.set(0.95, 1.1, 1.1);
+          body.position.set(0, 0.85, 0);
+          const head = new THREE.Mesh(new THREE.SphereGeometry(0.54, 14, 14), mainMat);
+          head.position.set(0, 1.75, 0.3);
+          const hornL = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.75, 8), accentMat);
+          hornL.position.set(-0.24, 2.45, 0.15);
+          hornL.rotation.x = -0.35;
+          const hornR = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.75, 8), accentMat);
+          hornR.position.set(0.24, 2.45, 0.15);
+          hornR.rotation.x = -0.35;
+          const beard = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.42, 8), accentMat);
+          beard.rotation.x = Math.PI;
+          beard.position.set(0, 1.18, 0.68);
+          charGroup.add(body, head, hornL, hornR, beard);
+          addFaceDetails(1.75, 0.3, 0.54);
+        }
+
+        group.add(charGroup);
+        animalWorldGroup.add(group);
+      });
+
+      // 숲속 언덕 & 나무
+      const hillMat = new THREE.MeshStandardMaterial({ color: 0x1e3a2f, roughness: 0.95 });
+      for (let i = -3; i <= 3; i++) {
+        const hill = new THREE.Mesh(new THREE.SphereGeometry(13, 18, 14), hillMat);
+        hill.scale.set(1.3, 0.85, 0.8);
+        hill.position.set(i * 19, 3, -60);
+        animalWorldGroup.add(hill);
+      }
+
+      const trunkMat = new THREE.MeshStandardMaterial({ color: 0x451a03 });
+      const crownMat = new THREE.MeshStandardMaterial({ color: 0x166534 });
+      [-24, -16, 16, 24].forEach((tx) => {
+        const tree = new THREE.Group();
+        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.45, 2.2, 8), trunkMat);
+        trunk.position.y = 1.1;
+        const crown1 = new THREE.Mesh(new THREE.SphereGeometry(1.7, 12, 12), crownMat);
+        crown1.position.y = 3.2;
+        const crown2 = new THREE.Mesh(new THREE.SphereGeometry(1.3, 12, 12), crownMat);
+        crown2.position.set(0.8, 2.7, 0.4);
+        tree.add(trunk, crown1, crown2);
+        tree.position.set(tx, 0, -45);
+        animalWorldGroup.add(tree);
+      });
+
+      aSightLine = makeLine(0xef4444, false);
+      aLeftLine = makeLine(0x0284c7, true);
+      aRightLine = makeLine(0xea580c, true);
+      animalWorldGroup.add(aSightLine, aLeftLine, aRightLine);
+    }
+
+    // ---------------------------------------------------------
+    // 2단계: 지구 공전과 목표 별(S) 우주 월드 구축
+    // ---------------------------------------------------------
+    function buildSpaceWorld() {
+      // 미세 별빛 파티클 600개
+      const starGeo = new THREE.BufferGeometry();
+      const starPositions = [];
+      for (let i = 0; i < 600; i++) {
+        starPositions.push(
+          (Math.random() - 0.5) * 220,
+          (Math.random() - 0.5) * 140 + 15,
+          -Math.random() * 160 + 20
+        );
+      }
+      starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starPositions, 3));
+      const starMat = new THREE.PointsMaterial({ color: 0xe2e8f0, size: 0.45, transparent: true, opacity: 0.75 });
+      spaceWorldGroup.add(new THREE.Points(starGeo, starMat));
+
+      // 격자 그리드
+      const gridHelper = new THREE.GridHelper(90, 30, 0x1e293b, 0x0f172a);
+      gridHelper.position.y = -0.5;
+      spaceWorldGroup.add(gridHelper);
+
+      // 태양
+      sunGroup = new THREE.Group();
+      sunGroup.position.set(0, 1.65, 0);
+      const sunSphere = new THREE.Mesh(
+        new THREE.SphereGeometry(1.15, 24, 24),
+        new THREE.MeshBasicMaterial({ color: 0xfbbf24 })
+      );
+      const sunHalo = new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: createGlowTexture('rgba(254, 240, 138, 1)', 'rgba(245, 158, 11, 0.45)'),
+          transparent: true,
+          blending: THREE.AdditiveBlending
+        })
+      );
+      sunHalo.scale.set(6.5, 6.5, 1);
+      sunGroup.add(sunSphere, sunHalo);
+      spaceWorldGroup.add(sunGroup);
+
+      // 지구 공전 궤도 고리
+      const orbitPoints = [];
+      for (let i = 0; i <= 96; i++) {
+        const rad = (i / 96) * Math.PI * 2;
+        orbitPoints.push(new THREE.Vector3(Math.cos(rad) * orbitRadius, 1.65, Math.sin(rad) * orbitRadius));
+      }
+      spaceWorldGroup.add(new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(orbitPoints),
+        new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.55 })
+      ));
+
+      // 1월 & 7월 마커
+      const janMarker = new THREE.Mesh(
+        new THREE.RingGeometry(0.45, 0.62, 24),
+        new THREE.MeshBasicMaterial({ color: 0x38bdf8, side: THREE.DoubleSide })
+      );
+      janMarker.rotation.x = Math.PI / 2;
+      janMarker.position.set(-orbitRadius, 1.65, 0);
+
+      const julMarker = new THREE.Mesh(
+        new THREE.RingGeometry(0.45, 0.62, 24),
+        new THREE.MeshBasicMaterial({ color: 0xf97316, side: THREE.DoubleSide })
+      );
+      julMarker.rotation.x = Math.PI / 2;
+      julMarker.position.set(orbitRadius, 1.65, 0);
+      spaceWorldGroup.add(janMarker, julMarker);
+
+      // 지구
+      earthGroup = new THREE.Group();
+      const earthSphere = new THREE.Mesh(
+        new THREE.SphereGeometry(0.56, 24, 24),
+        new THREE.MeshStandardMaterial({ color: 0x2563eb, roughness: 0.4, metalness: 0.1 })
+      );
+      const continent1 = new THREE.Mesh(
+        new THREE.SphereGeometry(0.32, 12, 12),
+        new THREE.MeshStandardMaterial({ color: 0x10b981, roughness: 0.7 })
+      );
+      continent1.position.set(0.28, 0.18, 0.25);
+      const continent2 = new THREE.Mesh(
+        new THREE.SphereGeometry(0.26, 12, 12),
+        new THREE.MeshStandardMaterial({ color: 0x10b981, roughness: 0.7 })
+      );
+      continent2.position.set(-0.3, -0.15, 0.28);
+      const atmoHalo = new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: createGlowTexture('rgba(125, 211, 252, 0.9)', 'rgba(56, 189, 248, 0.25)'),
+          transparent: true,
+          blending: THREE.AdditiveBlending
+        })
+      );
+      atmoHalo.scale.set(2.4, 2.4, 1);
+      earthGroup.add(earthSphere, continent1, continent2, atmoHalo);
+      spaceWorldGroup.add(earthGroup);
+
+      // 목표 별 (S)
+      targetStarGroup = new THREE.Group();
+      const targetCore = new THREE.Mesh(
+        new THREE.SphereGeometry(0.52, 24, 24),
+        new THREE.MeshBasicMaterial({ color: 0xffffff })
+      );
+      const targetGlow = new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: createGlowTexture('rgba(255, 255, 255, 1)', 'rgba(251, 191, 36, 0.65)'),
+          transparent: true,
+          blending: THREE.AdditiveBlending
+        })
+      );
+      targetGlow.scale.set(3.8, 3.8, 1);
+
+      const labelCanvas = document.createElement('canvas');
+      labelCanvas.width = 256;
+      labelCanvas.height = 96;
+      const lctx = labelCanvas.getContext('2d');
+      lctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+      lctx.beginPath();
+      lctx.roundRect(12, 12, 232, 72, 24);
+      lctx.fill();
+      lctx.strokeStyle = '#fbbf24';
+      lctx.lineWidth = 5;
+      lctx.stroke();
+      lctx.fillStyle = '#fef08a';
+      lctx.font = '900 36px "Noto Sans KR", sans-serif';
+      lctx.textAlign = 'center';
+      lctx.textBaseline = 'middle';
+      lctx.fillText('목표 별 (S)', 128, 48);
+
+      const labelSprite = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(labelCanvas), transparent: true })
+      );
+      labelSprite.scale.set(2.6, 0.98, 1);
+      labelSprite.position.set(0, 1.35, 0);
+      targetStarGroup.add(targetCore, targetGlow, labelSprite);
+      spaceWorldGroup.add(targetStarGroup);
+
+      // 배경 별 1~9번
+      const bgStarsList = [
+        { num: 1, color: '#93c5fd' },
+        { num: 2, color: '#bae6fd' },
+        { num: 3, color: '#fef08a' },
+        { num: 4, color: '#fed7aa' },
+        { num: 5, color: '#fde047' },
+        { num: 6, color: '#fbcfe8' },
+        { num: 7, color: '#ddd6fe' },
+        { num: 8, color: '#a5f3fc' },
+        { num: 9, color: '#fecaca' }
+      ];
+
+      const spacingX = 4.7;
+      bgStarsList.forEach((b, idx) => {
+        const posX = (idx - 4) * spacingX;
+        const group = new THREE.Group();
+        group.position.set(posX, 0, bgZ);
+
+        const signTex = createStarSignTexture(b.num, b.color, b.num === 5);
+        const signMesh = new THREE.Mesh(
+          new THREE.PlaneGeometry(3.8, 4.75),
+          new THREE.MeshBasicMaterial({ map: signTex, side: THREE.DoubleSide })
+        );
+        signMesh.position.set(0, 6.2, -0.6);
+        group.add(signMesh);
+
+        const bgStarCore = new THREE.Mesh(
+          new THREE.SphereGeometry(0.42, 16, 16),
+          new THREE.MeshBasicMaterial({ color: 0xffffff })
+        );
+        bgStarCore.position.set(0, 1.65, 0.4);
+
+        const bgStarHalo = new THREE.Sprite(
+          new THREE.SpriteMaterial({
+            map: createGlowTexture('rgba(255,255,255,1)', b.color),
+            transparent: true,
+            blending: THREE.AdditiveBlending
+          })
+        );
+        bgStarHalo.scale.set(3.2, 3.2, 1);
+        bgStarHalo.position.set(0, 1.65, 0.4);
+
+        group.add(bgStarCore, bgStarHalo);
+        spaceWorldGroup.add(group);
+      });
+
+      sSightLine = makeLine(0xef4444, false);
+      sJanLine = makeLine(0x38bdf8, true);
+      sJulLine = makeLine(0xf97316, true);
+      sSunLine = makeLine(0xfacc15, true);
+      spaceWorldGroup.add(sSightLine, sJanLine, sJulLine, sSunLine);
+    }
+
+    // ---------------------------------------------------------
+    // 테마(동물 버전 <-> 우주 버전) 전환 로직
+    // ---------------------------------------------------------
+    function switchTheme(theme) {
+      currentTheme = theme;
+      state.autoPlay = false;
+
+      const isAnimal = theme === 'animal';
+      animalWorldGroup.visible = isAnimal;
+      spaceWorldGroup.visible = !isAnimal;
+
+      hemiLight.visible = isAnimal;
+      dirLight.visible = isAnimal;
+      ambientLight.visible = !isAnimal;
+      sunLight.visible = !isAnimal;
+
+      const body = document.getElementById('appBody');
+      const headerCard = document.getElementById('headerCard');
+      const bottomPanel = document.getElementById('bottomPanel');
+      const ctrlBox1 = document.getElementById('ctrlBox1');
+      const ctrlBox2 = document.getElementById('ctrlBox2');
+      const hudDivider = document.getElementById('hudDivider');
+      const posSlider = document.getElementById('posSlider');
+      const distSlider = document.getElementById('distSlider');
+
+      if (isAnimal) {
+        scene.background = new THREE.Color(0x334155);
+        scene.fog = new THREE.FogExp2(0x334155, 0.0072);
+
+        body.className = 'relative w-screen h-screen overflow-hidden text-slate-800';
+        headerCard.className = 'bg-white/95 backdrop-blur-md border-2 border-amber-300 p-3.5 sm:px-5 sm:py-3.5 rounded-2xl shadow-xl pointer-events-auto transition-colors duration-300';
+        bottomPanel.className = 'absolute bottom-3 left-3 right-3 max-w-4xl mx-auto bg-white/95 backdrop-blur-md border-2 border-sky-200 p-4 sm:p-5 rounded-3xl shadow-2xl z-10 transition-colors duration-300';
+        ctrlBox1.className = 'bg-amber-50/90 border border-amber-200 p-3.5 rounded-2xl';
+        ctrlBox2.className = 'bg-sky-50/90 border border-sky-200 p-3.5 rounded-2xl';
+        hudDivider.className = 'mt-3 pt-2.5 border-t border-slate-200 flex flex-wrap justify-between items-center gap-2 text-xs sm:text-sm';
+
+        document.getElementById('tabAnimal').className = 'px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-black bg-orange-500 text-white shadow-md transition active:scale-95';
+        document.getElementById('tabSpace').className = 'px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-black bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300 transition active:scale-95';
+
+        document.getElementById('mainTitle').className = 'text-base sm:text-xl font-black text-slate-800 tracking-tight';
+        document.getElementById('mainTitle').textContent = '당근과 동물 친구들로 보는 시차(Parallax)';
+        document.getElementById('mainDesc').className = 'text-xs sm:text-sm text-slate-600 mt-0.5';
+        document.getElementById('mainDesc').innerHTML = '관측자의 <span class="text-orange-600 font-bold">좌우 위치</span>와 당근까지의 <span class="text-sky-600 font-bold">거리</span>를 바꿔보며 뒤쪽 <span class="font-bold text-slate-800">1~9번 동물 표지판</span> 변화를 확인하세요!';
+
+        document.getElementById('ctrl1Title').className = 'text-xs sm:text-sm font-black text-amber-800';
+        document.getElementById('ctrl1Title').textContent = '🚶 1단계: 관측자 좌우 위치';
+        document.getElementById('ctrl1ValText').className = 'text-xs sm:text-sm font-black text-orange-600 bg-white px-2.5 py-0.5 rounded-full border border-amber-200';
+
+        document.getElementById('ctrl2Title').className = 'text-xs sm:text-sm font-black text-sky-800';
+        document.getElementById('ctrl2Title').textContent = '🥕 2단계: 당근까지의 거리';
+        document.getElementById('ctrl2ValText').className = 'text-xs sm:text-sm font-black text-sky-700 bg-white px-2.5 py-0.5 rounded-full border border-sky-200';
+
+        document.getElementById('btnPosLeft').className = 'flex-1 py-1.5 bg-sky-100 hover:bg-sky-200 text-sky-800 font-bold text-xs rounded-xl transition';
+        document.getElementById('btnPosLeft').textContent = '⬅️ 왼쪽 끝';
+        document.getElementById('btnPosRight').className = 'flex-1 py-1.5 bg-orange-100 hover:bg-orange-200 text-orange-800 font-bold text-xs rounded-xl transition';
+        document.getElementById('btnPosRight').textContent = '오른쪽 끝 ➡️';
+
+        document.getElementById('btnDistNear').className = 'flex-1 py-1.5 bg-rose-100 hover:bg-rose-200 text-rose-800 font-bold text-xs rounded-xl transition';
+        document.getElementById('btnDistNear').textContent = '🔥 코앞 (시차 큼)';
+        document.getElementById('btnDistMid').className = 'flex-1 py-1.5 bg-sky-100 hover:bg-sky-200 text-sky-800 font-bold text-xs rounded-xl transition';
+        document.getElementById('btnDistFar').className = 'flex-1 py-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 font-bold text-xs rounded-xl transition';
+        document.getElementById('btnDistFar').textContent = '🔭 저 멀리 (시차 작음)';
+
+        document.getElementById('hudDistLabel').className = 'text-slate-500 font-bold';
+        document.getElementById('hudDistLabel').textContent = '현재 당근 거리:';
+        document.getElementById('hudDistance').className = 'font-black text-slate-800 ml-1';
+        document.getElementById('hudParallaxLabel').className = 'text-slate-500 font-bold';
+        document.getElementById('hudParallaxLabel').textContent = '배경 동물 변화(시차):';
+        document.getElementById('hudParallax').className = 'font-black text-orange-600 ml-1';
+
+        document.getElementById('crosshairRing').className = 'w-10 h-10 border-2 border-rose-500/75 rounded-full flex items-center justify-center bg-white/10';
+        document.getElementById('crosshairDot').className = 'w-2 h-2 bg-rose-500 rounded-full';
+
+        posSlider.min = '-4.5';
+        posSlider.max = '4.5';
+        posSlider.step = '0.1';
+        posSlider.value = state.observerX;
+
+        distSlider.min = '7.5';
+        distSlider.max = '30';
+        distSlider.value = state.targetDistance;
+      } else {
+        scene.background = new THREE.Color(0x030712);
+        scene.fog = new THREE.FogExp2(0x030712, 0.0055);
+
+        body.className = 'space-theme relative w-screen h-screen overflow-hidden text-slate-100';
+        headerCard.className = 'bg-slate-900/90 backdrop-blur-md border-2 border-sky-500/40 p-3.5 sm:px-5 sm:py-3.5 rounded-2xl shadow-xl pointer-events-auto transition-colors duration-300';
+        bottomPanel.className = 'absolute bottom-3 left-3 right-3 max-w-4xl mx-auto bg-slate-900/95 backdrop-blur-md border-2 border-sky-500/40 p-4 sm:p-5 rounded-3xl shadow-2xl z-10 transition-colors duration-300';
+        ctrlBox1.className = 'bg-slate-800/90 border border-sky-500/30 p-3.5 rounded-2xl';
+        ctrlBox2.className = 'bg-slate-800/90 border border-amber-500/30 p-3.5 rounded-2xl';
+        hudDivider.className = 'mt-3 pt-2.5 border-t border-slate-700/80 flex flex-wrap justify-between items-center gap-2 text-xs sm:text-sm';
+
+        document.getElementById('tabAnimal').className = 'px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-black bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-600 transition active:scale-95';
+        document.getElementById('tabSpace').className = 'px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-black bg-sky-500 text-slate-950 shadow-md transition active:scale-95';
+
+        document.getElementById('mainTitle').className = 'text-base sm:text-xl font-black text-slate-100 tracking-tight';
+        document.getElementById('mainTitle').textContent = '지구 공전과 목표 별(S)로 보는 연주시차';
+        document.getElementById('mainDesc').className = 'text-xs sm:text-sm text-slate-300 mt-0.5';
+        document.getElementById('mainDesc').innerHTML = '<span class="text-sky-400 font-bold">태양 주위를 공전하는 지구</span>와 <span class="text-amber-400 font-bold">목표 별(S)의 거리</span>를 바꿔보며 뒤쪽 우주 배경 <span class="font-bold text-white">별 1~9번</span> 위치 변화를 관찰하세요!';
+
+        document.getElementById('ctrl1Title').className = 'text-xs sm:text-sm font-black text-sky-300';
+        document.getElementById('ctrl1Title').textContent = '🌍 1단계: 지구 공전 위치 (1월 ↔ 7월)';
+        document.getElementById('ctrl1ValText').className = 'text-xs sm:text-sm font-black text-sky-400 bg-slate-950 px-2.5 py-0.5 rounded-full border border-sky-500/40';
+
+        document.getElementById('ctrl2Title').className = 'text-xs sm:text-sm font-black text-amber-300';
+        document.getElementById('ctrl2Title').textContent = '⭐ 2단계: 목표 별(S)까지의 거리';
+        document.getElementById('ctrl2ValText').className = 'text-xs sm:text-sm font-black text-amber-400 bg-slate-950 px-2.5 py-0.5 rounded-full border border-amber-500/40';
+
+        document.getElementById('btnPosLeft').className = 'flex-1 py-1.5 bg-sky-950 hover:bg-sky-900 text-sky-300 border border-sky-700 font-bold text-xs rounded-xl transition';
+        document.getElementById('btnPosLeft').textContent = '❄️ 1월 (왼쪽)';
+        document.getElementById('btnPosRight').className = 'flex-1 py-1.5 bg-orange-950 hover:bg-orange-900 text-orange-300 border border-orange-700 font-bold text-xs rounded-xl transition';
+        document.getElementById('btnPosRight').textContent = '☀️ 7월 (오른쪽)';
+
+        document.getElementById('btnDistNear').className = 'flex-1 py-1.5 bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-700 font-bold text-xs rounded-xl transition';
+        document.getElementById('btnDistNear').textContent = '🔥 가까움 (시차 큼)';
+        document.getElementById('btnDistMid').className = 'flex-1 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 font-bold text-xs rounded-xl transition';
+        document.getElementById('btnDistFar').className = 'flex-1 py-1.5 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-700 font-bold text-xs rounded-xl transition';
+        document.getElementById('btnDistFar').textContent = '🔭 아주 멈 (시차 작음)';
+
+        document.getElementById('hudDistLabel').className = 'text-slate-400 font-bold';
+        document.getElementById('hudDistLabel').textContent = '목표 별(S) 거리:';
+        document.getElementById('hudDistance').className = 'font-black text-amber-300 ml-1';
+        document.getElementById('hudParallaxLabel').className = 'text-slate-400 font-bold';
+        document.getElementById('hudParallaxLabel').textContent = '배경 별(1~9) 시차 변화:';
+        document.getElementById('hudParallax').className = 'font-black text-sky-400 ml-1';
+
+        document.getElementById('crosshairRing').className = 'w-10 h-10 border-2 border-amber-400/75 rounded-full flex items-center justify-center bg-sky-500/5';
+        document.getElementById('crosshairDot').className = 'w-2 h-2 bg-amber-400 rounded-full';
+
+        posSlider.min = '0';
+        posSlider.max = '360';
+        posSlider.step = '1';
+        posSlider.value = state.orbitDeg;
+
+        distSlider.min = '8.5';
+        distSlider.max = '30';
+        if (state.targetDistance < 8.5) state.targetDistance = 8.5;
+        distSlider.value = state.targetDistance;
+      }
+
+      updateAutoBtnUI();
+      setCameraMode(cameraMode);
+    }
+
+    // ---------------------------------------------------------
+    // 시뮬레이션 위치 & UI 업데이트
+    // ---------------------------------------------------------
+    function updateSimulation() {
+      const targetZ = -state.targetDistance;
+      const d = state.targetDistance;
+
+      let distLabel = '보통 거리';
+      let parallaxLabel = '중간 정도 변함';
+      if (d <= 11.5) {
+        distLabel = '매우 가까움';
+        parallaxLabel = '매우 큼 (배경 번호가 확 바뀜!)';
+      } else if (d <= 21) {
+        distLabel = '보통 거리';
+        parallaxLabel = '중간 정도 이동함';
+      } else {
+        distLabel = '아주 멈';
+        parallaxLabel = '매우 작음 (거의 5번 앞에 고정!)';
+      }
+
+      if (currentTheme === 'animal') {
+        observerGroup.position.set(state.observerX, 0, 0);
+        carrotObject.position.set(0, 0, targetZ);
+
+        const projectToBg = (obsX) => obsX + (0 - obsX) * (bgZ / targetZ);
+
+        aSightLine.geometry.setFromPoints([
+          new THREE.Vector3(state.observerX, 1.65, 0),
+          new THREE.Vector3(projectToBg(state.observerX), 1.65, bgZ)
+        ]);
+        aLeftLine.geometry.setFromPoints([
+          new THREE.Vector3(-4.5, 1.65, 0),
+          new THREE.Vector3(projectToBg(-4.5), 1.65, bgZ)
+        ]);
+        aLeftLine.computeLineDistances();
+
+        aRightLine.geometry.setFromPoints([
+          new THREE.Vector3(4.5, 1.65, 0),
+          new THREE.Vector3(projectToBg(4.5), 1.65, bgZ)
+        ]);
+        aRightLine.computeLineDistances();
+
+        if (cameraMode === 'observer') {
+          camera.position.set(state.observerX, 1.65, 0.4);
+          camera.lookAt(0, 1.65, targetZ);
+          observerGroup.visible = false;
+          aSightLine.visible = false;
+          aLeftLine.visible = false;
+          aRightLine.visible = false;
+          document.getElementById('crosshair').style.display = 'flex';
+        } else {
+          const centerZ = -20;
+          const camX = Math.sin(topViewAngle.theta) * topViewAngle.radius;
+          const camY = Math.sin(topViewAngle.phi) * topViewAngle.radius;
+          const camZ = centerZ + Math.cos(topViewAngle.theta) * Math.cos(topViewAngle.phi) * topViewAngle.radius;
+          camera.position.set(camX, Math.max(8, camY), camZ);
+          camera.lookAt(0, 0, centerZ);
+          observerGroup.visible = true;
+          aSightLine.visible = true;
+          aLeftLine.visible = true;
+          aRightLine.visible = true;
+          document.getElementById('crosshair').style.display = 'none';
+        }
+
+        const ox = state.observerX;
+        let posSide = '중앙 (0.0m)';
+        if (ox < -0.2) posSide = `왼쪽 (${ox.toFixed(1)}m)`;
+        else if (ox > 0.2) posSide = `오른쪽 (+${ox.toFixed(1)}m)`;
+
+        document.getElementById('ctrl1ValText').textContent = posSide;
+        document.getElementById('ctrl2ValText').textContent = `${d.toFixed(1)} m (${distLabel})`;
+        document.getElementById('hudDistance').textContent = `${distLabel} (${d.toFixed(1)}m)`;
+        document.getElementById('hudParallax').textContent = parallaxLabel;
+
+      } else {
+        const rad = (state.orbitDeg * Math.PI) / 180;
+        // 북반구 위에서 내려다보았을 때 반시계 방향 공전:
+        // 180도(1월, 왼쪽 -X) -> 90도(4월, 앞쪽 +Z) -> 0도(7월, 오른쪽 +X) -> 270도(10월, 뒤쪽 -Z)
+        const earthX = Math.cos(rad) * orbitRadius;
+        const earthZ = Math.sin(rad) * orbitRadius;
+
+        earthGroup.position.set(earthX, 1.65, earthZ);
+        targetStarGroup.position.set(0, 1.65, targetZ);
+
+        const projectToBg = (ex, ez) => {
+          const t = (bgZ - ez) / (targetZ - ez);
+          return ex + (0 - ex) * t;
+        };
+
+        sSightLine.geometry.setFromPoints([
+          new THREE.Vector3(earthX, 1.65, earthZ),
+          new THREE.Vector3(projectToBg(earthX, earthZ), 1.65, bgZ)
+        ]);
+        sJanLine.geometry.setFromPoints([
+          new THREE.Vector3(-orbitRadius, 1.65, 0),
+          new THREE.Vector3(projectToBg(-orbitRadius, 0), 1.65, bgZ)
+        ]);
+        sJanLine.computeLineDistances();
+
+        sJulLine.geometry.setFromPoints([
+          new THREE.Vector3(orbitRadius, 1.65, 0),
+          new THREE.Vector3(projectToBg(orbitRadius, 0), 1.65, bgZ)
+        ]);
+        sJulLine.computeLineDistances();
+
+        sSunLine.geometry.setFromPoints([
+          new THREE.Vector3(0, 1.65, 0),
+          new THREE.Vector3(0, 1.65, bgZ)
+        ]);
+        sSunLine.computeLineDistances();
+
+        if (cameraMode === 'observer') {
+          // 태양을 통과하지 않도록 궤도 앞쪽 기준선에서 아주 미세한(12%) 앞뒤 공전 깊이감만 반영
+          const subtleCamZ = -orbitRadius - 0.6 + earthZ * 0.12;
+          camera.position.set(earthX, 1.65, subtleCamZ);
+          camera.lookAt(0, 1.65, targetZ);
+          earthGroup.visible = false;
+          sSightLine.visible = false;
+          sJanLine.visible = false;
+          sJulLine.visible = false;
+          sSunLine.visible = false;
+          document.getElementById('crosshair').style.display = 'flex';
+        } else {
+          const centerZ = -18;
+          const camX = Math.sin(topViewAngle.theta) * topViewAngle.radius;
+          const camY = Math.sin(topViewAngle.phi) * topViewAngle.radius;
+          const camZ = centerZ + Math.cos(topViewAngle.theta) * Math.cos(topViewAngle.phi) * topViewAngle.radius;
+          camera.position.set(camX, Math.max(9, camY), camZ);
+          camera.lookAt(0, 1.65, centerZ);
+          earthGroup.visible = true;
+          sSightLine.visible = true;
+          sJanLine.visible = true;
+          sJulLine.visible = true;
+          sSunLine.visible = true;
+          document.getElementById('crosshair').style.display = 'none';
+        }
+
+        const normDeg = ((state.orbitDeg % 360) + 360) % 360;
+        let monthText = '';
+        if (Math.abs(normDeg - 180) <= 15) monthText = '❄️ 1월 (왼쪽 궤도)';
+        else if (normDeg <= 15 || normDeg >= 345) monthText = '☀️ 7월 (오른쪽 궤도)';
+        else if (normDeg > 15 && normDeg < 165) monthText = '🌸 4월 (봄 · 반시계 공전 중)';
+        else monthText = '🍂 10월 (가을 · 반시계 공전 중)';
+
+        document.getElementById('ctrl1ValText').textContent = monthText;
+        document.getElementById('ctrl2ValText').textContent = `${d.toFixed(1)} pc (${distLabel})`;
+        document.getElementById('hudDistance').textContent = `${distLabel} (${d.toFixed(1)} pc)`;
+        document.getElementById('hudParallax').textContent = parallaxLabel;
+      }
+    }
+
+    function setCameraMode(mode) {
+      cameraMode = mode;
+      const btnObs = document.getElementById('btnViewObserver');
+      const btnTop = document.getElementById('btnViewTop');
+
+      if (currentTheme === 'animal') {
+        btnObs.textContent = '👁️ 관측자 시점 (1인칭)';
+        btnTop.textContent = '🛰️ 위에서 내려다보기 (3인칭)';
+        if (mode === 'observer') {
+          btnObs.className = 'px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm bg-orange-500 text-white shadow-lg transition active:scale-95';
+          btnTop.className = 'px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm bg-white/95 text-slate-700 border-2 border-slate-200 hover:bg-slate-50 shadow-lg transition active:scale-95';
+        } else {
+          btnTop.className = 'px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm bg-orange-500 text-white shadow-lg transition active:scale-95';
+          btnObs.className = 'px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm bg-white/95 text-slate-700 border-2 border-slate-200 hover:bg-slate-50 shadow-lg transition active:scale-95';
+        }
+      } else {
+        btnObs.textContent = '🔭 지구 망원경 시점 (1인칭)';
+        btnTop.textContent = '🛸 우주 위에서 보기 (3인칭)';
+        if (mode === 'observer') {
+          btnObs.className = 'px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm bg-sky-500 text-slate-950 shadow-lg transition active:scale-95';
+          btnTop.className = 'px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm bg-slate-900/90 text-slate-200 border-2 border-slate-700 hover:bg-slate-800 shadow-lg transition active:scale-95';
+        } else {
+          btnTop.className = 'px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm bg-sky-500 text-slate-950 shadow-lg transition active:scale-95';
+          btnObs.className = 'px-4 py-2.5 rounded-xl font-bold text-xs sm:text-sm bg-slate-900/90 text-slate-200 border-2 border-slate-700 hover:bg-slate-800 shadow-lg transition active:scale-95';
+        }
+      }
+      updateSimulation();
+    }
+
+    function handlePosPreset(side) {
+      state.autoPlay = false;
+      updateAutoBtnUI();
+      if (currentTheme === 'animal') {
+        state.observerX = side === 'left' ? -4.5 : 4.5;
+        document.getElementById('posSlider').value = state.observerX;
+      } else {
+        state.orbitDeg = side === 'left' ? 180 : 0;
+        document.getElementById('posSlider').value = state.orbitDeg;
+      }
+      updateSimulation();
+    }
+
+    function setDistance(val) {
+      state.targetDistance = val;
+      document.getElementById('distSlider').value = val;
+      updateSimulation();
+    }
+
+    function toggleAutoPlay() {
+      state.autoPlay = !state.autoPlay;
+      updateAutoBtnUI();
+    }
+
+    function updateAutoBtnUI() {
+      const btn = document.getElementById('btnAutoMove');
+      if (state.autoPlay) {
+        btn.textContent = currentTheme === 'animal' ? '⏸️ 이동 정지' : '⏸️ 공전 정지';
+        btn.className = 'flex-1 py-1.5 bg-rose-500 hover:bg-rose-400 text-white font-black text-xs rounded-xl shadow transition';
+      } else {
+        btn.textContent = currentTheme === 'animal' ? '⚡ 좌우 자동 왕복' : '⚡ 1년 공전 재생';
+        btn.className = 'flex-1 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl shadow transition';
+      }
+    }
+
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      if (state.autoPlay) {
+        if (currentTheme === 'animal') {
+          state.observerX += 0.055 * state.walkDir;
+          if (state.observerX >= 4.5) {
+            state.observerX = 4.5;
+            state.walkDir = -1;
+          } else if (state.observerX <= -4.5) {
+            state.observerX = -4.5;
+            state.walkDir = 1;
+          }
+          document.getElementById('posSlider').value = state.observerX;
+        } else {
+          // 반시계 방향 공전 (180° 1월 -> 90° 4월 -> 0° 7월 -> 270° 10월 -> 180° 1월)
+          state.orbitDeg = (state.orbitDeg - 1.1 + 360) % 360;
+          document.getElementById('posSlider').value = Math.round(state.orbitDeg);
+        }
+        updateSimulation();
+      }
+
+      if (carrotObject && carrotObject.children[0]) {
+        carrotObject.children[0].rotation.y += 0.015;
+      }
+      if (earthGroup) {
+        earthGroup.rotation.y += 0.02;
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    window.onload = function () {
+      init3D();
+      animate();
+    };
+  </script>
+</body>
+</html>
